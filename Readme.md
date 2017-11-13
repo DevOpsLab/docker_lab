@@ -3,6 +3,13 @@
 ## Objective
 The objective of this exercise is to begin building an app the Docker way.
 
+1. Defining Docker Container using Dockerfile
+2. Deploying Docker Container on a Single Host using Compose (aka Docker-Compose)
+3. Create VMs hosting Docker, using Docker-Machine
+4. Deploying Docker Containers on many VMs/Hosts/Nodes in a same Network/Docker-Cluster using Swarm and Stack
+
+## Undedrstanding the Big-picture
+
 We'll start at the bottom of the hierarchy of such an app, which is a **container**.
 
 Above this level is a **service**, which defines how a container behaves in production.
@@ -97,7 +104,7 @@ You can now use `docker run` to run your app from any machine with command like 
 
 Note:  If you don't specify the :tag portion of these commands, the tag of :latest will be assumed, both when you build and when you run images. Docker will use the last version of the image that ran without a tag specified (not necessarily the most recent image).
 
-To be sure your image works as a deployed container, run this command, slotting in your info for `username`, `repo`, and `tag`: `docker run -p 80:80 username/repo:tag`, then visit `http://localhost/`.
+To be sure your image works as a deployed container, run this command, slotting in your info for `username`, `repo`, and `tag`: `docker run -p 80:80 username/repo:tag`, then visit `http://localhost/`. If that doesn't work, try the ip of the machine/container where the app is deployed as URL.
 
 -------------------------------------------------------------------------------------------------------------------------------
 Note: While typing docker run is simple enough, the true implementation of a container in production is running it as a service. Services codify a container’s behavior in a Compose file, and this file can be used to scale, limit, and redeploy our app. Changes to the service can be applied in place, as it runs, using the same command that launched the service: docker stack deploy.
@@ -159,6 +166,169 @@ Swarm managers are the only machines in a swarm that can execute your commands, 
 Up until now, you have been using Docker in a single-host mode on your local machine. But Docker also can be switched into swarm mode, and that’s what enables the use of swarms. Enabling swarm mode instantly makes the current machine a swarm manager. From then on, Docker will run the commands you execute on the swarm you’re managing, rather than just on the current machine.
 -------------------------------------------------------------------------------------------------------------------------------
 
+**Step 12: Create VMs dynamically using Docker-Machine**
+
+Create VMs using docker-machine:
+* `docker-machine create --driver virtualbox myvm1`
+* `docker-machine create --driver virtualbox myvm1`
+
+List to see the details of above VM:
+`docker-machine ls`
+
+Get ip of a vm machine by name
+`docker-machine ip vm_name`
+`docker-machine ip myvm1`
+`docker-machine ip myvm2`
+
+**Step 13: Create Swarm -- Initialize the swarm in one of the VMs and add notes to it**
+
+The first machine will act as the manager, which executes management commands and authenticates workers to join the swarm, and the second will be a worker.
+
+You can send commands to your VMs using `docker-machine ssh`. Instruct `myvm1` to become a swarm manager with `docker swarm init`:
+`docker-machine ssh myvm1 "docker swarm init --advertise-addr <myvm1 ip>"` requires you to manually find the machine-ip (in my cases, 192.168.99.101) and fill it in place of `<myvm1 ip>`. Is there a better way where this can be automated?
+
+To script the above command: `docker-machine ssh myvm1 "docker swarm init --advertise-addr $(docker-machine ip myvm1)"` where the command within `$()` gets executed in the host machine where docker-machine resides to find out the ip of the vm by its name. 
+
+Executing the above command will return an output something that looks like below:
+```
+Swarm initialized: current node (n8oqj08mlkthdvn40bpgdeh84) is now a manager.
+
+To add a worker to this swarm, run the following command:
+
+    docker swarm join --token SWMTKN-1-2t1tlwyj8aeutuqy0wnp9pm7zz0w5ac4cnfydrovd7lj1mqt4d-1g0sixf92fyvczd02k6ofl1w6 192.168.99.101:2377
+
+To add a manager to this swarm, run 'docker swarm join-token manager' and follow the instructions.
+```
+As you can see, the response to docker swarm init contains a pre-configured docker swarm join command for you to run on any nodes you want to add. Copy this command, and send it to myvm2 via docker-machine ssh to have myvm2 join your new swarm as a worker:
+```
+$ docker-machine ssh myvm2 "docker swarm join \
+--token <token> \
+<ip>:2377"
+
+This node joined a swarm as a worker.
+```
+Congratulations, you have created your first swarm!
+
+Run docker node ls on the manager to view the nodes in this swarm:
+```
+$ docker-machine ssh myvm1 "docker node ls"
+ID                            HOSTNAME            STATUS              AVAILABILITY        MANAGER STATUS
+brtu9urxwfd5j0zrmkubhpkbd     myvm2               Ready               Active
+rihwohkh3ph38fhillhhb84sk *   myvm1               Ready               Active              Leader
+```
+
+**Step 14: Deploy app on the swarm cluster**
+
+Configure a docker-machine shell to the swarm manager:
+
+So far, you’ve been wrapping Docker commmands in docker-machine ssh to talk to the VMs. Another option is to run docker-machine env <machine> to get and run a command that configures your current shell to talk to the Docker daemon on the VM. This method works better for the next step because it allows you to use your local docker-compose.yml file to deploy the app “remotely” without having to copy it anywhere.
+
+Type `docker-machine env myvm1`, then copy-paste and run the command provided as the last line of the output to configure your shell to talk to `myvm1`, the swarm manager.
+
+Run `docker-machine env myvm1` to get the command to configure your shell to talk to `myvm1`.
+```
+$ docker-machine env myvm1
+export DOCKER_TLS_VERIFY="1"
+export DOCKER_HOST="tcp://192.168.99.100:2376"
+export DOCKER_CERT_PATH="/Users/sam/.docker/machine/machines/myvm1"
+export DOCKER_MACHINE_NAME="myvm1"
+# Run this command to configure your shell:
+# eval $(docker-machine env myvm1)
+```
+Now, run the given command to configure your shell to talk to `myvm1`:
+`$ eval $(docker-machine env myvm1)`
+
+Run `docker-machine ls` to verify that `myvm1` is now the active machine, as indicated by the asterisk next to it.
+```
+$ docker-machine ls
+NAME    ACTIVE   DRIVER       STATE     URL                         SWARM   DOCKER        ERRORS
+myvm1   *        virtualbox   Running   tcp://192.168.99.100:2376           v17.06.2-ce   
+myvm2   -        virtualbox   Running   tcp://192.168.99.101:2376           v17.06.2-ce   
+```
+
+You are connected to `myvm1` by means of the `docker-machine` shell configuration, and you still have access to the files on your local host. Make sure you are in the same directory as before, which includes the `docker-compose.yml` file you created earlier.
+
+Now that you have my `myvm1`, you can use its powers as a swarm manager to deploy your app by using the same `docker stack deploy` command you used in Step 10 to `myvm1`, and your local copy of `docker-compose.yml`.
+
+Just like before, run the following command to deploy the app on `myvm1`: 
+`docker stack deploy -c docker-compose.yml getstartedlab`
+
+And that’s it, the app is deployed on a swarm cluster! Only this time you’ll see that the services (and associated containers) have been distributed between both `myvm1` and `myvm2`.
+```
+$ docker stack ps getstartedlab
+ID            NAME                  IMAGE                   NODE   DESIRED STATE
+jq2g3qp8nzwx  getstartedlab_web.1   john/get-started:part2  myvm1  Running
+88wgshobzoxl  getstartedlab_web.2   john/get-started:part2  myvm2  Running
+vbb1qbkb0o2z  getstartedlab_web.3   john/get-started:part2  myvm2  Running
+ghii74p9budx  getstartedlab_web.4   john/get-started:part2  myvm1  Running
+0prmarhavs87  getstartedlab_web.5   john/get-started:part2  myvm2  Running
+```
+
+Accessing your cluster: You can access your app from the IP address of either `myvm1` or `myvm2`. The network you created is shared between them and load-balancing. Run `docker-machine ls` to get your VMs' IP addresses and visit either of them on a browser, hitting refresh (or just curl them). In my case it turns out to be `http://192.168.99.101/` or `http://192.168.99.102/`
+
+You’ll see five possible container IDs all cycling by randomly, demonstrating the load-balancing.
+
+The reason both IP addresses work is that nodes in a swarm participate in an ingress routing mesh. This ensures that a service deployed at a certain port within your swarm always has that port reserved to itself, no matter what node is actually running the container. Here’s a diagram of how a routing mesh for a service called my-web published at port 8080 on a three-node swarm would look:
+![alt text](https://docs.docker.com/engine/swarm/images/ingress-routing-mesh.png "Ingress Routing Mesh")
+
+-----------------------------------------------------------------------------------------------------------------------------
+**Connecting to VMs with `docker-machine env` and `docker-machine ssh`**
+* To set your shell to talk to a different machine like `myvm2`, simply re-run `docker-machine env` in the same or a different shell, then run the given command to point to `myvm2`. This is always specific to the current shell. If you change to an unconfigured shell or open a new one, you need to re-run the commands. Use `docker-machine ls` to list machines, see what state they are in, get IP addresses, and find out which one, if any, you are connected to.
+* Alternatively, you can wrap Docker commands in the form of `docker-machine ssh <machine> "<command>"`, which logs directly into the VM but doesn't give you immediate access to files on your local host.
+* On Mac and Linux, you can use `docker-machine scp <file> <machine>:~` to copy files across machines, but Windows users need a Linux terminal emulator like [Git Bash](https://git-for-windows.github.io/) in order for this to work.
+
+This tutorial demos both `docker-machine ssh` and `docker-machine env`, since these are available on all platforms via the `docker-machine` CLI.
+-----------------------------------------------------------------------------------------------------------------------------
+
+**Step 15: Iterating and scaling the app**
+
+Scale the app by changing the `docker-compose.yml` file.
+
+Change the app behavior by editing code, then rebuild, and push the new image.
+
+In either case, simply run `docker stack deploy` again to deploy these changes.
+
+You can join any machine, physical or virtual, to this swarm, using the same `docker swarm join` command you used on `myvm2`, and capacity will be added to your cluster. Just run `docker stack deploy` afterwards, and your app will take advantage of the new resources.
+
+**Step 16: Cleanup and reboot**
+
+You can tear down the stack with docker stack rm. For example:
+`docker stack rm getstartedlab`
+
+You can remove this swarm if you want to with `docker-machine ssh myvm2 "docker swarm leave"` on the worker and 
+`docker-machine ssh myvm1 "docker swarm leave --force"` on the manager
+
+You can unset the `docker-machine` environment variables in your current shell with the following command:
+`eval $(docker-machine env -u)`
+This disconnects the shell from docker-machine created virtual machines, and allows you to continue working in the same shell, now using native docker commands (for example, on Docker for Mac or Docker for Windows).
+
+Restarting Docker machines: If you shut down your local host, Docker machines will stop running. You can check the status of machines by `running docker-machine ls`.
+```
+$ docker-machine ls
+NAME    ACTIVE   DRIVER       STATE     URL   SWARM   DOCKER    ERRORS
+myvm1   -        virtualbox   Stopped                 Unknown
+myvm2   -        virtualbox   Stopped                 Unknown
+```
+
+To restart a machine that’s stopped, run:
+`docker-machine start <machine-name>`
+
+To stop/kill the vm you created, you can use either `docker-machine stop vmname` or `docker-machine kill vmname`:
+* `docker-machine stop myvm1`
+* `docker-machine kill myvm2`
+
+You can check the status of vm if its stopped or running like below: 
+* `docker-machine status myvm1` 
+* or by simply using `docker-machine ls`
+
+You can start or restart like below:
+* `docker-machine start myvm1`
+* `docker-machine restart myvm2`
+
+You can remove the VMs created using `docker-machine` by using `rm` command like below:
+* `docker-machine rm myvm1`
+* `docker-machine rm myvm2`
+
 ## Issues N Fixes
 * Issue: Docker for Windows 10 doesn't work for Windows 10 Home edition, because Hyper-V present in Pro edition is required as a prerequisite to run Docker natively in Windows.
 
@@ -167,6 +337,10 @@ Up until now, you have been using Docker in a single-host mode on your local mac
 * Issue: Couldn't connect to web-server instance running in Docker container from the browser in host machine using url - http://localhost:4000.
 
   Fix: The container port does get exposed at the Docker IP address, shown by `docker-machine ip Default`. Grab this ip of the docker container and substitute in place of localhost in the url. In my case the url turned  out to be `http://192.168.99.100:4000/`
+
+* Issue: How do I open another terminal
+  
+  Fix: Simply double-click the "Docker Quickstart Terminal" in your host windows machine again :)
 
 ## Tools
 * In case of Windows, use [Visual Studio Code](https://code.visualstudio.com/) as IDE for convenience. Its light-weight and hass various plugins to support several languages and its frameworks.
@@ -204,6 +378,28 @@ docker inspect <task or container>                   # Inspect task or container
 docker container ls -q                                      # List container IDs
 docker stack rm <appname>                             # Tear down an application
 docker swarm leave --force      # Take down a single node swarm from the manager
+
+docker-machine create --driver virtualbox myvm1 # Create a VM (Mac, Win7, Linux)
+docker-machine create -d hyperv --hyperv-virtual-switch "myswitch" myvm1 # Win10
+docker-machine env myvm1                # View basic information about your node
+docker-machine ssh myvm1 "docker node ls"         # List the nodes in your swarm
+docker-machine ssh myvm1 "docker node inspect <node ID>"        # Inspect a node
+docker-machine ssh myvm1 "docker swarm join-token -q worker"   # View join token
+docker-machine ssh myvm1   # Open an SSH session with the VM; type "exit" to end
+docker node ls                # View nodes in swarm (while logged on to manager)
+docker-machine ssh myvm2 "docker swarm leave"  # Make the worker leave the swarm
+docker-machine ssh myvm1 "docker swarm leave -f" # Make master leave, kill swarm
+docker-machine ls # list VMs, asterisk shows which VM this shell is talking to
+docker-machine start myvm1            # Start a VM that is currently not running
+docker-machine env myvm1      # show environment variables and command for myvm1
+eval $(docker-machine env myvm1)         # Mac command to connect shell to myvm1
+& "C:\Program Files\Docker\Docker\Resources\bin\docker-machine.exe" env myvm1 | Invoke-Expression   # Windows command to connect shell to myvm1
+docker stack deploy -c <file> <app>  # Deploy an app; command shell must be set to talk to manager (myvm1), uses local Compose file
+docker-machine scp docker-compose.yml myvm1:~ # Copy file to node's home dir (only required if you use ssh to connect to manager and deploy the app)
+docker-machine ssh myvm1 "docker stack deploy -c <file> <app>"   # Deploy an app using ssh (you must have first copied the Compose file to myvm1)
+eval $(docker-machine env -u)     # Disconnect shell from VMs, use native docker
+docker-machine stop $(docker-machine ls -q)               # Stop all running VMs
+docker-machine rm $(docker-machine ls -q) # Delete all VMs and their disk images
 ```
 
 ## References
