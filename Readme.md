@@ -108,6 +108,7 @@ To be sure your image works as a deployed container, run this command, slotting 
 
 -------------------------------------------------------------------------------------------------------------------------------
 Note: While typing docker run is simple enough, the true implementation of a container in production is running it as a service. Services codify a container’s behavior in a Compose file, and this file can be used to scale, limit, and redeploy our app. Changes to the service can be applied in place, as it runs, using the same command that launched the service: docker stack deploy.
+
 -------------------------------------------------------------------------------------------------------------------------------
 
 **Step 8: Create Compose file defining services behaviour**
@@ -164,6 +165,7 @@ Swarm managers can use several strategies to run containers, such as “emptiest
 Swarm managers are the only machines in a swarm that can execute your commands, or authorize other machines to join the swarm as workers. Workers are just there to provide capacity and do not have the authority to tell any other machine what it can and cannot do.
 
 Up until now, you have been using Docker in a single-host mode on your local machine. But Docker also can be switched into swarm mode, and that’s what enables the use of swarms. Enabling swarm mode instantly makes the current machine a swarm manager. From then on, Docker will run the commands you execute on the swarm you’re managing, rather than just on the current machine.
+
 -------------------------------------------------------------------------------------------------------------------------------
 
 **Step 12: Create VMs dynamically using Docker-Machine**
@@ -278,6 +280,7 @@ The reason both IP addresses work is that nodes in a swarm participate in an ing
 * On Mac and Linux, you can use `docker-machine scp <file> <machine>:~` to copy files across machines, but Windows users need a Linux terminal emulator like [Git Bash](https://git-for-windows.github.io/) in order for this to work.
 
 This tutorial demos both `docker-machine ssh` and `docker-machine env`, since these are available on all platforms via the `docker-machine` CLI.
+
 -----------------------------------------------------------------------------------------------------------------------------
 
 **Step 15: Iterating and scaling the app**
@@ -328,6 +331,60 @@ You can start or restart like below:
 You can remove the VMs created using `docker-machine` by using `rm` command like below:
 * `docker-machine rm myvm1`
 * `docker-machine rm myvm2`
+
+**Step 17: Add a new service and redeploy**
+
+This step is about reachcing the top of the hierarchy of distributed applications: the **stack**.
+
+-----------------------------------------------------------------------------------------------------------------------------
+A **stack** is a group of interrelated services that share dependencies, and can be orchestrated and scaled together.
+
+ A single stack is capable of defining and coordinating the functionality of an entire application (though very complex applications may want to use multiple stacks).
+
+-----------------------------------------------------------------------------------------------------------------------------
+
+ We technically have been using stacks from the earlier steps by creating a Compose file and executing the command `docker stack deploy`. But that was a single service stack running on a single host, which is not usually what takes place in production.
+
+ Here, you will take what you've learned, make multiple services relate to each other, and run them on multiple machines.
+
+It’s easy to add services to our `docker-compose.yml` file. First, let’s add a free visualizer service that lets us look at how our swarm is scheduling containers.
+
+1. Open up docker-compose.yml in an editor and replace its contents with the following. Be sure to replace username/repo:tag with your image details.
+```
+version: "3"
+services:
+  web:
+    # replace username/repo:tag with your name and image details
+    image: username/repo:tag
+    deploy:
+      replicas: 5
+      restart_policy:
+        condition: on-failure
+      resources:
+        limits:
+          cpus: "0.1"
+          memory: 50M
+    ports:
+      - "80:80"
+    networks:
+      - webnet
+  visualizer:
+    image: dockersamples/visualizer:stable
+    ports:
+      - "8080:8080"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    deploy:
+      placement:
+        constraints: [node.role == manager]
+    networks:
+      - webnet
+networks:
+  webnet:
+```
+The only thing new here is the peer service to `web`, named `visualizer`. You’ll see two new things here: a `volumes` key, giving the visualizer access to the host’s socket file for Docker, and a `placement` key, ensuring that this service only ever runs on a swarm manager – never a worker. That’s because this container, built from [an open source project created by Docker](https://github.com/ManoMarks/docker-swarm-visualizer), displays Docker services running on a swarm in a diagram.
+
+
 
 ## Issues N Fixes
 * Issue: Docker for Windows 10 doesn't work for Windows 10 Home edition, because Hyper-V present in Pro edition is required as a prerequisite to run Docker natively in Windows.

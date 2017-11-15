@@ -22,6 +22,18 @@ services:
       - "80:80"
     networks:
       - webnet
+  visualizer:
+    image: dockersamples/visualizer:stable
+    ports:
+      - "8080:8080"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    deploy:
+      placement:
+        constraints: [node.role == manager]
+    networks:
+      - webnet      
+
 # Networks Spec - "webnet" only
 # Define the webnet network with the default settings (which is a load-balanced overlay network).
 # This specifies the  n/w to be created as part of your app.
